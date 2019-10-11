@@ -32,6 +32,9 @@ class PPO():
         self.optimizer = optim.Adam(actor_critic.parameters(), lr=lr, eps=eps)
 
     def update(self, rollouts):
+        # print( "Rollouts.returns", rollouts.returns.shape ) 
+        # print( "Rollouts.value_preds", rollouts.value_preds.shape ) 
+        
         advantages = rollouts.returns[:-1] - rollouts.value_preds[:-1]
         advantages = (advantages - advantages.mean()) / (
             advantages.std() + 1e-5)
@@ -58,12 +61,11 @@ class PPO():
                     obs_batch, recurrent_hidden_states_batch, masks_batch,
                     actions_batch)
 
-                ratio = torch.exp(action_log_probs -
-                                  old_action_log_probs_batch)
+                ratio = torch.exp( action_log_probs - old_action_log_probs_batch )
                 surr1 = ratio * adv_targ
                 surr2 = torch.clamp(ratio, 1.0 - self.clip_param,
                                     1.0 + self.clip_param) * adv_targ
-                action_loss = -torch.min(surr1, surr2).mean()
+                action_loss = -torch.min( surr1, surr2 ).mean()
 
                 if self.use_clipped_value_loss:
                     value_pred_clipped = value_preds_batch + \

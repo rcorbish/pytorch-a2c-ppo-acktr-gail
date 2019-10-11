@@ -19,8 +19,10 @@ from a2c_ppo_acktr.model import Policy
 from a2c_ppo_acktr.storage import RolloutStorage
 from evaluation import evaluate
 
+import VehicleBall_v0
 
 def main():
+    
     args = get_args()
 
     torch.manual_seed(args.seed)
@@ -44,7 +46,8 @@ def main():
     actor_critic = Policy(
         envs.observation_space.shape,
         envs.action_space,
-        base_kwargs={'recurrent': args.recurrent_policy})
+        base_kwargs={'recurrent': args.recurrent_policy, 
+                    'hidden_size' : args.hidden_size } )
     actor_critic.to(device)
 
     if args.algo == 'a2c':
@@ -96,6 +99,7 @@ def main():
     rollouts.to(device)
 
     episode_rewards = deque(maxlen=10)
+    rewards = []
 
     start = time.time()
     num_updates = int(
@@ -117,10 +121,11 @@ def main():
 
             # Obser reward and next obs
             obs, reward, done, infos = envs.step(action)
-
+            rewards.extend( reward )
             for info in infos:
                 if 'episode' in info.keys():
-                    episode_rewards.append(info['episode']['r'])
+                    # print( info['episode'] )
+                    episode_rewards.append( info['episode']['r'] / info['episode']['l'] )
 
             # If done then clean the history of observations.
             masks = torch.FloatTensor(
@@ -176,14 +181,17 @@ def main():
         if j % args.log_interval == 0 and len(episode_rewards) > 1:
             total_num_steps = (j + 1) * args.num_processes * args.num_steps
             end = time.time()
+            # print( episode_rewards )
             print(
-                "Updates {}, num timesteps {}, FPS {} \n Last {} training episodes: mean/median reward {:.1f}/{:.1f}, min/max reward {:.1f}/{:.1f}\n"
+                "Updates {}, num timesteps {}, FPS {} \n Last {} training episodes: mean/median reward {:.3f}/{:.3f}, min/max reward {:.3f}/{:.3f}\n"
                 .format(j, total_num_steps,
                         int(total_num_steps / (end - start)),
                         len(episode_rewards), np.mean(episode_rewards),
                         np.median(episode_rewards), np.min(episode_rewards),
                         np.max(episode_rewards), dist_entropy, value_loss,
                         action_loss))
+            # print( list( map( lambda x : x["score"] , infos ) ) )
+            rewards = []
 
         if (args.eval_interval is not None and len(episode_rewards) > 1
                 and j % args.eval_interval == 0):
@@ -193,4 +201,5 @@ def main():
 
 
 if __name__ == "__main__":
+    VehicleBall_v0.init()
     main()

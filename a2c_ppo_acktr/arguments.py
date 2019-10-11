@@ -113,6 +113,11 @@ def get_args():
         default=None,
         help='eval interval, one eval per n updates (default: None)')
     parser.add_argument(
+        '--hidden-size',
+        type=int,
+        default=64,
+        help='Size of hidden layers for policy networks (default: 64)')
+    parser.add_argument(
         '--num-env-steps',
         type=int,
         default=10e6,

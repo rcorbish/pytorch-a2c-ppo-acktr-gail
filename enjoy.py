@@ -5,15 +5,20 @@ import sys
 
 import numpy as np
 import torch
+import time
 
 from a2c_ppo_acktr.envs import VecPyTorch, make_vec_envs
 from a2c_ppo_acktr.utils import get_render_func, get_vec_normalize
+
+import VehicleBall_v0
+
+VehicleBall_v0.init()
 
 sys.path.append('a2c_ppo_acktr')
 
 parser = argparse.ArgumentParser(description='RL')
 parser.add_argument(
-    '--seed', type=int, default=1, help='random seed (default: 1)')
+    '--seed', type=int, default=int(time.time()), help='random seed (default: 1)')
 parser.add_argument(
     '--log-interval',
     type=int,
@@ -36,14 +41,18 @@ args = parser.parse_args()
 
 args.det = not args.non_det
 
+DEVICE='cuda' if torch.cuda.is_available() else "cpu"
+
 env = make_vec_envs(
     args.env_name,
     args.seed + 1000,
     1,
     None,
     None,
-    device='cpu',
-    allow_early_resets=False)
+    device=DEVICE ,
+    allow_early_resets=False,
+    render_mode='human' ,
+    )
 
 # Get a render function
 render_func = get_render_func(env)
@@ -57,9 +66,8 @@ if vec_norm is not None:
     vec_norm.eval()
     vec_norm.ob_rms = ob_rms
 
-recurrent_hidden_states = torch.zeros(1,
-                                      actor_critic.recurrent_hidden_state_size)
-masks = torch.zeros(1, 1)
+recurrent_hidden_states = torch.zeros(1, actor_critic.recurrent_hidden_state_size, device=DEVICE )
+masks = torch.zeros(1, 1, device=DEVICE )
 
 obs = env.reset()
 
@@ -81,7 +89,8 @@ while True:
 
     # Obser reward and next obs
     obs, reward, done, _ = env.step(action)
-
+    # if reward.item() > 2 :
+    #     print( reward )
     masks.fill_(0.0 if done else 1.0)
 
     if args.env_name.find('Bullet') > -1:
@@ -92,4 +101,7 @@ while True:
             p.resetDebugVisualizerCamera(distance, yaw, -20, humanPos)
 
     if render_func is not None:
-        render_func('human')
+        img = render_func('human')
+        # print( type(img) )
+
+    time.sleep( .001 )
