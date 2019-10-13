@@ -18,7 +18,7 @@ sys.path.append('a2c_ppo_acktr')
 
 parser = argparse.ArgumentParser(description='RL')
 parser.add_argument(
-    '--seed', type=int, default=int(time.time()), help='random seed (default: 1)')
+    '--seed', type=int, default=int(time.time() * 10000 ), help='random seed (default: time())')
 parser.add_argument(
     '--log-interval',
     type=int,
@@ -43,16 +43,28 @@ args.det = not args.non_det
 
 DEVICE='cuda' if torch.cuda.is_available() else "cpu"
 
-env = make_vec_envs(
-    args.env_name,
-    args.seed + 1000,
-    1,
-    None,
-    None,
-    device=DEVICE ,
-    allow_early_resets=False,
-    render_mode='human' ,
-    )
+env = None
+try :
+    env = make_vec_envs(
+        args.env_name,
+        args.seed + 1000,
+        1,
+        None,
+        None,
+        device=DEVICE ,
+        allow_early_resets=False,
+        render_mode='human' ,
+        )
+except TypeError as e :
+    env = make_vec_envs(
+        args.env_name,
+        args.seed + 1000,
+        1,
+        None,
+        None,
+        device=DEVICE ,
+        allow_early_resets=False,
+        )
 
 # Get a render function
 render_func = get_render_func(env)
@@ -81,16 +93,18 @@ if args.env_name.find('Bullet') > -1:
     for i in range(p.getNumBodies()):
         if (p.getBodyInfo(i)[0].decode() == "torso"):
             torsoId = i
-
+frames = 0 
 while True:
     with torch.no_grad():
         value, action, _, recurrent_hidden_states = actor_critic.act(
             obs, recurrent_hidden_states, masks, deterministic=args.det)
 
     # Obser reward and next obs
-    obs, reward, done, _ = env.step(action)
-    # if reward.item() > 2 :
-    #     print( reward )
+    obs, reward, done, info = env.step(action)
+    frames = frames + 1
+    if done :
+        # print( "Final score:", info[0]["score"], frames, "frames" )
+        frames = 0 
     masks.fill_(0.0 if done else 1.0)
 
     if args.env_name.find('Bullet') > -1:
@@ -102,6 +116,5 @@ while True:
 
     if render_func is not None:
         img = render_func('human')
-        # print( type(img) )
 
     time.sleep( .001 )
