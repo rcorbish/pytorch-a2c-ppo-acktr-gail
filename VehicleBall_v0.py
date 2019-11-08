@@ -4,6 +4,8 @@ import pybullet_data
 import random
 import gym
 
+import numpy as np 
+
 import tkinter
 import cv2
 import PIL.Image, PIL.ImageTk
@@ -11,11 +13,19 @@ import math
 
 # Action constants
 NULL_ACTION = 0
-STEER_LEFT = 1
-STEER_RIGHT = 2
-ACCELERATE = 3
-BRAKE = 4
-NUMBER_OF_ACTIONS = 5
+
+ACCEL_LEFT = 1
+BRAKE_LEFT = 2
+NULL_LEFT = 3
+
+ACCEL_RIGHT = 4
+BRAKE_RIGHT = 5
+NULL_RIGHT = 6
+
+ACCEL_NULL = 7
+BRAKE_NULL = 8
+
+NUMBER_OF_ACTIONS = 9
 
 # useful constants
 MAX_SPEED = 40
@@ -24,6 +34,19 @@ MAX_STEER = .6
 NUM_BALLS = 1
 
 clamp = lambda x, l, u: l if x < l else u if x > u else x
+
+class BallData :
+    def __init__( self, id, pos ) :
+        self.id = id
+        self.pos = pos 
+
+    def movedTo( self, pos ) :
+        dx = pos[0]-self.pos[0] 
+        dy = pos[1]-self.pos[1] 
+        self.pos = pos
+        distance_moved = math.sqrt( dx*dx + dy*dy )        
+        return distance_moved
+
 
 class VehicleBallEnvSpec( gym.Env ) :
     '''
@@ -45,29 +68,29 @@ class VehicleBallEnvSpec( gym.Env ) :
         self.maxForce = max_force       # Force to apply to joints
         # debug on screen items
         self.text = None
+        self.prev_distance_to_ball = None
 
         # Connect to pybullet
         self.physicsClient = p.connect( p.DIRECT if render_mode == 'rgb_array' else p.GUI )
         p.setGravity(0,0,-9.81)
 
         # Extra niceties
-        p.setAdditionalSearchPath(pybullet_data.getDataPath()) #optionally
+        p.setAdditionalSearchPath( pybullet_data.getDataPath()) #optionally
 
         # Ground
         self.planeId = p.loadURDF("plane.urdf")
 
         self.balls = []                 # Current balls to display
         self.lostBalls = []             # Balls gone over the edge are stored here
+
         for _ in range( num_balls ) :
-            self.balls.append( p.loadURDF("sphere-car-env.urdf", globalScaling=.5 ) )
+            ballId = p.loadURDF("sphere-car-env.urdf", globalScaling=.5 )
+            position = [ 0,0,0 ]
+            self.balls.append(  BallData( ballId, position ) )
 
-        # Vehicle start position
-        startPos = [0,0,0] 
-
-        self.vehicle = p.loadURDF("racecar/racecar.urdf", startPos, globalScaling=3.0 ) 
+        self.vehicle = p.loadURDF("racecar/racecar.urdf", globalScaling=3.0 ) 
 
         # Used for reset later
-        self.stateId = p.saveState()
         self.reset()
 
         # Set no force on front wheels, it's a RWD racecar!
@@ -83,8 +106,7 @@ class VehicleBallEnvSpec( gym.Env ) :
         # obs shape is pos + orientation + speed of vehicle + each ball position
         state = self.state()
         # self.observation_space = gym.spaces.Box( float("inf"), float("-inf"), shape=[ len(state) ] ) 
-        self.observation_space = gym.spaces.Box( 2*math.pi, -2*math.pi, shape=[ len(state) ] ) 
-        # self.observation_space = gym.spaces.Box( float("inf"), float("-inf"), shape=[ len(state) ] ) 
+        self.observation_space = gym.spaces.Box( -1.0, 1.0, shape=[ len(state) ] ) 
         
         # Did we open a window
         self.window = None
@@ -136,25 +158,35 @@ class VehicleBallEnvSpec( gym.Env ) :
 
             return img
 
+
     def reset( self ) :
         '''
         public interface
         Start a new episode - new ball position(s) - move car
         to beginning and reinitialize local attributes - score etc.
         '''
+        self.text = None
+        self.prev_distance_to_ball = None
+
         self.score = 0 
-        self.speed = 1
+        self.speed = 0
         self.steer = 0
         self.frame = 0 
-        self.done = False
+        self.balls.extend( self.lostBalls )
         self.lostBalls = []
-        p.restoreState( self.stateId )
-        for ball in self.balls :
-            startPos = [ random.randrange(2,6), random.randrange(-4,4), .25 ]
-            startOrientation = p.getQuaternionFromEuler([0,0,random.random()] )
 
-            p.resetBasePositionAndOrientation( ball, startPos, startOrientation )
+        startOrientation = [ 0,0,0,1 ]
+
+        for ball in self.balls :
+            ball.movedTo( [ random.randrange(2,6), random.randrange(-4,4), .25 ] )
+            p.resetBasePositionAndOrientation( ball.id, ball.pos, startOrientation )
+
+        # Vehicle start position
+        startPos = [ 0,0,0 ]
+        p.resetBasePositionAndOrientation( self.vehicle, startPos, startOrientation )
+
         return self.state()
+
 
     def step( self, action ) :
         '''
@@ -163,17 +195,14 @@ class VehicleBallEnvSpec( gym.Env ) :
         Return the standard openai gym return tuple
         '''
         self.frame = self.frame + 1
-        # can be passed in a 1 elem array or a single number
-        if hasattr(action, '__iter__') :
-            action = action[0]
-        
-        if ( action==STEER_LEFT ) and self.steer < 1 :
+   
+        if ( action==ACCEL_LEFT or action==BRAKE_LEFT or action==NULL_LEFT ) and self.steer < 1.0 :
             self.steer = self.steer + .01
-        elif ( action==STEER_RIGHT ) and self.steer > -1 :
+        if ( action==ACCEL_RIGHT or action==BRAKE_RIGHT or action==NULL_RIGHT  ) and self.steer > -1.0 :
             self.steer = self.steer - .01
-        elif ( action==BRAKE ) and self.speed > 0 :
+        if ( action==BRAKE_LEFT or action==BRAKE_RIGHT or action==BRAKE_NULL ) and self.speed > -1.0 :
             self.speed = self.speed - .01
-        elif ( action==ACCELERATE ) and self.speed < 1 :
+        if ( action==ACCEL_LEFT or action==ACCEL_RIGHT or action==ACCEL_NULL ) and self.speed < 1.0 :
             self.speed = self.speed + .01
 
         # First do the wheel speed
@@ -182,56 +211,70 @@ class VehicleBallEnvSpec( gym.Env ) :
         # Then adjust steering position
         p.setJointMotorControl2(self.vehicle, 4, controlMode=p.POSITION_CONTROL, targetPosition=(self.steer*self.max_steer), force=self.maxForce ) # Right wheel steer
         p.setJointMotorControl2(self.vehicle, 6, controlMode=p.POSITION_CONTROL, targetPosition=(self.steer*self.max_steer), force=self.maxForce ) # Left wheel steer
-        # Tell engine to do it's magic
+   
+        # Tell physics engine to do it's magic
         p.stepSimulation()
 
-        done = False
-        reward = -0.001
+        data = p.getBasePositionAndOrientation( self.vehicle )
+        vehpos = data[0]
 
+
+        done = False
         # Have we fallen off the edge?
         contacts = p.getContactPoints( self.vehicle, self.planeId )
         # vehicle not in contact with anything ... it fell off the edge - we're done
         if len(contacts) == 0 :  
-            # sometimes the car wheelies and flies - make sure we're below the plane
-            data = p.getBasePositionAndOrientation( self.vehicle )
-            vehpos = data[0]
+            # sometimes the car wheelies and flies - 
+            # ignore 'done' if we're not below the plane
             done = vehpos[2] < 0
-            if done :   # if we fell off - that's a negative reward
-                reward = reward - 10000
         
-        # check for each contact with a ball
+        reward = 0
+        # check for each contact with a ball & vehicle
         for ball in self.balls :
-            contacts = p.getContactPoints( self.vehicle, ball )
-            reward = reward + len(contacts)    # add to score if in contact with any ball
-            
-        for ball in self.balls :
-            # has a ball has fallen off the world - only check 1st time 
-            if ball not in self.lostBalls :
-                contacts = p.getContactPoints( self.planeId, ball )
-                if len(contacts) == 0 :
-                    data = p.getBasePositionAndOrientation( ball )
-                    ballpos = data[0]
-                    if ballpos[2] < 0 :
-                        self.lostBalls.append( ball )
-                        reward = reward + 40
-                        # done = True
+
+            data = p.getBasePositionAndOrientation( ball.id )
+            ballpos = data[0]
+
+            dx = vehpos[0]-ballpos[0] 
+            dy = vehpos[1]-ballpos[1] 
+            distance_to_ball = math.sqrt( dx*dx + dy*dy )
+
+            if self.prev_distance_to_ball :
+                distance_closed = self.prev_distance_to_ball - distance_to_ball 
+
+                # reward for being closer to ball than prev. step
+                if distance_closed > 0 :
+                    reward = reward + distance_closed
+
+            self.prev_distance_to_ball = distance_to_ball
+
+            # fell below plane ? ... over the edge
+            if ball.pos[2] < 0.1 :
+                self.lostBalls.append( ball )
+
+            distance_moved = ball.movedTo( ballpos ) 
+            reward = reward + distance_moved * 5
+
+        # remove lost balls from the self.balls list
+        self.balls = [ elem for elem in self.balls if elem not in self.lostBalls ]
 
         obs = self.state() 
 
         vehdg = obs[0]
+
         ballhdg = obs[2]
+
         ideal_steer = ballhdg - vehdg   
         # if abs( ideal_steer ) < 1e-4 :
-        steer_error = ideal_steer - self.steer
-        reward = reward - clamp( abs(steer_error), 0, .1 )
+        steer_error = ideal_steer - self.steer * self.max_steer
+        # reward = reward - clamp( abs(steer_error), 0, .1 ) / 10.0
 
         # Update the score ...
-        self.score = self.score + ( reward if not self.done else 0 )
-        info = { "score": self.score, "ideal_steer" : ideal_steer }
+        self.score = self.score + reward 
+        info = { "score": self.score, "ideal_steer" : ideal_steer, "frame" : self.frame  }
 
         # Return openai.gym format
-        rc = ( obs, reward, self.done, info )
-        self.done = done
+        rc = ( obs, reward, done, info )
         return rc
 
 
@@ -268,25 +311,30 @@ class VehicleBallEnvSpec( gym.Env ) :
         vehhdg = math.atan2(z,-y)   # yaw ( around Z )
         state = []
 
-        state.append( vehhdg )     
+        state.append( vehhdg / math.pi )   # convert -1 to 1
         # print( "Hdg:", x, y, z, math.degrees( math.atan2(z,-y) ), math.degrees( ori[2] ) )
         # state.append( self.speed )
         state.append( self.steer )
+        ang = -math.pi
 
         for ball in self.balls :
-            data = p.getBasePositionAndOrientation( ball )
-            ballpos = data[0]
+            ballpos = ball.pos
             dx = ballpos[0] - vehpos[0]  
             dy = ballpos[1] - vehpos[1]  
             ang = math.atan2( dy, dx )
-            state.append( ang )
-            # state.append( math.sqrt(dx*dx + dy*dy) )
+            state.append( ang / math.pi )
+            state.append( clamp( math.sqrt(dx*dx + dy*dy), 0, 10 ) / 10.0 )
+
+        for ball in self.lostBalls :
+            state.append( 0 )
+            state.append( 1 )
 
         if self.mode == 'human' and (self.frame & 31 == 0) :
             if self.text :
                 p.removeAllUserDebugItems()
 
-            txt = "St {:.3f}  He {:.3f}  Be {:.3f} Sc {:.3f}".format( 
+            txt = "Sp  {:.3f} St {:.3f}  He {:.3f}  Be {:.3f} Sc {:.3f}".format( 
+                    self.speed * self.max_speed ,
                     self.steer * self.max_steer * 57.296 ,
                     vehhdg * 57.296 ,
                     ang * 57.296 ,
@@ -294,6 +342,7 @@ class VehicleBallEnvSpec( gym.Env ) :
                     ) 
             self.text = p.addUserDebugText( txt, [-5,-5, 1], [0,0,0] )
         return state
+
 
 # Call this to register the class with openai.gym
 def init() :
