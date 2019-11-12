@@ -18,7 +18,7 @@ sys.path.append('a2c_ppo_acktr')
 
 parser = argparse.ArgumentParser(description='RL')
 parser.add_argument(
-    '--seed', type=int, default=int(time.time() * 10000 ), help='random seed (default: time())')
+    '--seed', type=int, default=(int( time.time() * 10000000 ) & 0xffff), help='random seed (default: time())')
 parser.add_argument(
     '--log-interval',
     type=int,
